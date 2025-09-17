@@ -21,11 +21,15 @@ classdef ObstacleMappingQC < handle
             model = createpde;
             geometryFromMesh(model, tr.Points', tr.ConnectivityList');
             
+            distances = pdist2(this.vertices.Vertices, this.vertices.Vertices);
+            distances(eye(size(distances)) == 1) = Inf;
+            precision = min(distances(:));
+     
+            % [xlim, ylim] = boundingbox(this.vertices);
+            % L = max(xlim(2)-xlim(1), ylim(2)-ylim(1));
+            % Hmax = L/100;
 
-
-            [xlim, ylim] = boundingbox(this.vertices);
-            L = max(xlim(2)-xlim(1), ylim(2)-ylim(1));
-            Hmax = L/100;
+            Hmax = precision;
             generateMesh(model,'Hmax',Hmax,'GeometricOrder','linear');
 
             v = model.Mesh.Nodes';
