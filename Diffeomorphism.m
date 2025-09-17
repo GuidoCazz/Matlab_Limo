@@ -14,7 +14,7 @@ addpath(genpath('../'))
 % % Ostacolo 2: rettangolo
 % M(30:40, 25:35) = 100;
 % 
-LAMBDA = 5e105; % LAMBDA should be big enough to ensure proper mapping
+LAMBDA = 5e95; % LAMBDA should be big enough to ensure proper mapping
 
 
 A = imread("map1.pgm");
@@ -52,6 +52,8 @@ end
 
 BW_filled = imfill(CH,"holes");
 boundaries = bwboundaries(CH);
+translation = [-1000,-1000];
+
 
 CF = bwconncomp(CH, 8);
 tolerance = 0.03;
@@ -66,13 +68,13 @@ for k=1:CF.NumObjects
 end
 
 realWorld.domain.type = 'qc';
-realWorld.domain.contour = [700 700 1200 1200 700;700 1200 1200 700 700];  
+realWorld.domain.contour = [-12.5 -12.5 7.5 7.5 -12.5;-12.5 12.5 12.5 -12.5 -12.5];  
 
-ballWorld.domain.center = [1000;1000];
-realWorld.domain.goal = [1000;1040];
+ballWorld.domain.center = [0;0];
+realWorld.domain.goal = [0;2];
 
 ballWorld.domain.goal = realWorld.domain.goal;
-ballWorld.domain.radius = 300;
+ballWorld.domain.radius = 12.50;
 
 
 realWorld.obstacles = {};
@@ -97,6 +99,8 @@ for i=1:CF.NumObjects
     V   = [b(:,2), b(:,1)];
 
     polygon{i} = polyshape(V(:,1),V(:,2), 'Simplify', true, 'KeepCollinearPoints', true);
+    polygon{i} = translate(polygon{i}, translation);
+    polygon{i} = scale(polygon{i}, 0.05, [0 0]);
 
     current_b = polygon{i}.Vertices;
     current_b(size(current_b,1)+1,:) = current_b(1,:);
@@ -124,6 +128,9 @@ for i=1:CF.NumObjects
     % Set axis limits to match the original image size
     axis([realWorld.domain.contour(1,1) realWorld.domain.contour(1,4) realWorld.domain.contour(2,1) realWorld.domain.contour(2,2)]);
     axis equal;
+    grid on;
+    xlabel('X-pixels');
+    ylabel('Y-pixels');
     set(gca,'YDir','reverse');
     title('Polygons');
     
@@ -165,9 +172,6 @@ grid on; title('Ball world (domain + obstacles)');
 
 
 wm = WorldMapping(realWorld, ballWorld);
-% wm.setRealWorld(realWorld); 
-% wm.setBallWorld(ballWorld);
-
 wm.evaluateMappings(LAMBDA);
 [r2bMap, b2rMap, r2bJac, b2rJac] = wm.getMappings();
 
