@@ -1,11 +1,19 @@
 clc; clear; close all;
 
-addpath(genpath('../'))
+restoredefaultpath;
+rehash toolboxcache;
 
-rosIP   = '10.132.252.25';                 
-MASTER  = 'http://10.132.252.87:11311';
+qcm_path = fullfile(pwd, 'qcm-cbf');
+addpath(genpath(qcm_path));
+
+rng default;
+
+rosIP   = '10.174.177.25';                 
+MASTER  = 'http://10.174.177.87:11311';
 MAP_IN  = '/map_raw';
 MAP_OUT = '/map';
+POSITION = '/amcl_pose';
+LAMBDA = 5e7;
 
 BYPASS  = false;            % true: copia 1:1; false: applica filtro
 ACTIVATE_BAG = false;
@@ -25,14 +33,15 @@ pub = rospublisher(MAP_OUT,'nav_msgs/OccupancyGrid','IsLatching',true,'DataForma
 bagWriter = rosbagwriter('office_map_out.bag');
 cleanup = onCleanup(@() close(bagWriter));
 
-subProc = rossubscriber(MAP_IN,'nav_msgs/OccupancyGrid', @(~,m)processAndPublish(m,pub,BYPASS,bagWriter,ACTIVATE_BAG,BAG_READ,ACKERMANN_RANGE,tftree,BASE_FRAME), ...
+sub = rossubscriber(POSITION,'geometry_msgs/PoseWithCovarianceStamped');
+subProc = rossubscriber(MAP_IN,'nav_msgs/OccupancyGrid', @(~,m)processAndPublish(m,pub,sub,BYPASS,bagWriter,ACTIVATE_BAG,BAG_READ,ACKERMANN_RANGE,tftree,BASE_FRAME,LAMBDA), ...
     'DataFormat','struct');
 
 
 disp('Relay attivo: /map_raw -> /map (latched).');
 
 % ====== FUNZIONI ======
-function processAndPublish(m,pub,BYPASS,bagWriter,ACTIVATE_BAG,BAG_READ,ACKERMANN_RANGE,tftree,BASE_FRAME)
+function processAndPublish(m,pub,sub,BYPASS,bagWriter,ACTIVATE_BAG,BAG_READ,ACKERMANN_RANGE,tftree,BASE_FRAME,LAMBDA)
 
     if ACTIVATE_BAG
         if BAG_READ
@@ -140,7 +149,6 @@ function processAndPublish(m,pub,BYPASS,bagWriter,ACTIVATE_BAG,BAG_READ,ACKERMAN
         % applica alla mappa
         M(~inReachable) = -1;
 
-
     end
 
 
@@ -148,7 +156,7 @@ function processAndPublish(m,pub,BYPASS,bagWriter,ACTIVATE_BAG,BAG_READ,ACKERMAN
     if BYPASS
         M2 = M;
     else
-        M2 = ProcessingDiffeomorphism(M);
+        M2 = ProcessingDiffeomorphism(M,sub,LAMBDA);
     end
 
     out = rosmessage(pub);             
@@ -166,9 +174,20 @@ function processAndPublish(m,pub,BYPASS,bagWriter,ACTIVATE_BAG,BAG_READ,ACKERMAN
     send(pub,out);
 end
 
-function M2 = ProcessingDiffeomorphism(M)
+function M2 = ProcessingDiffeomorphism(M,sub,LAMBDA)
      
     A = zeros(size(M));
+    
+    msg = sub.LatestMessage;
+
+    if isempty(msg)
+        % No message received yet, skip processing or use default
+        x = [0;0];
+    else
+        position = msg.Pose.Pose.Position;
+        x = [position.X;position.Y];
+    end
+     
 
     A(M == 100) = 0;
     A(M == 0) = 254;
@@ -214,17 +233,28 @@ function M2 = ProcessingDiffeomorphism(M)
     CF = bwconncomp(CH, 8);
     tolerance = 0.03;
 
-
-    b_reduced_history = cell(1, CF.NumObjects);
-    for k=1:CF.NumObjects
-
-       b = boundaries{k};
-       b = reducepoly(b,tolerance);
-       b = unique(b, 'rows','stable');
-
-       b_reduced_history{k} = b;
-
+    distances = zeros(1, CF.NumObjects);
+    
+    for k = 1:CF.NumObjects
+        b = boundaries{k};
+        
+        % Compute the distance of the centroid of the obstacle to the robot
+        centroid_x = mean(b(:,1));
+        centroid_y = mean(b(:,2));
+        
+        % Calculate the distance from the robot's position (x) to the centroid
+        distance = sqrt((centroid_x - x(1))^2 + (centroid_y - x(2))^2);
+        
+        % Store the distance for each obstacle
+        distances(k) = distance;
     end
+    
+    % Sort the obstacles by distance (ascending)
+    [~, sorted_indices] = sort(distances);
+    
+    % Keep the 5 closest obstacles
+    closest_obstacles = sorted_indices(1:min(5, length(sorted_indices)));
+
 
     realWorld.domain.type = 'qc';
     realWorld.domain.contour = [-12.5 -12.5 7.5 7.5 -12.5;-12.5 12.5 12.5 -12.5 -12.5];  
@@ -238,15 +268,18 @@ function M2 = ProcessingDiffeomorphism(M)
     realWorld.obstacles = {};
     ballWorld.obstacles = {};
   
-    polygon = cell(1, CF.NumObjects);
-    poly_plot = cell(1, CF.NumObjects);
+    polygon = cell(1, length(closest_obstacles));
+    poly_plot = cell(1, length(closest_obstacles));
 
-    for i=1:CF.NumObjects 
-    
-        current_b = b_reduced_history{i};
-        if isempty(current_b) || size(current_b,1) < 3, continue; end        
+
+    for i=1:length(closest_obstacles) 
         
-        b = double(current_b);
+        k = closest_obstacles(i);
+        b = boundaries{k};
+    
+        if isempty(b) || size(b,1) < 3, continue; end        
+        
+        b = double(b);
         b = b(all(isfinite(b),2),:);
         if size(b,1) < 3, continue; end
     
@@ -269,6 +302,7 @@ function M2 = ProcessingDiffeomorphism(M)
         ball_obstacle_radius{i} = sqrt(area(polygon{i})/pi);
         real_obstacle_contours{i} = current_b.';
         
+        
         obstacles{i} = struct('cx',cx_p,'cy',cy_p,'r',ball_obstacle_radius{i});
 
         realWorld.obstacles{end+1}.type    = 'qc';      
@@ -279,13 +313,15 @@ function M2 = ProcessingDiffeomorphism(M)
         ballWorld.obstacles{end}.radius          = ball_obstacle_radius{i};
         ballWorld.obstacles{end}.radiusOriginal  = ball_obstacle_radius{i};
     end
-   
+    
  
     wm = WorldMapping(realWorld, ballWorld);
 
+    wm.evaluateMappings(LAMBDA);
+    [r2bMap, b2rMap, r2bJac, b2rJac] = wm.getMappings();
 
     Diffeomorphism = matfile("diff_worldmapping.mat",'Writable',true);
-    save('diff_worldmapping.mat','wm','realWorld','ballWorld');
+    save('diff_worldmapping.mat','wm','realWorld','ballWorld','r2bMap','b2rMap');
 
     [height, width] = size(A);  
     pgmImage = false(height, width);
@@ -345,4 +381,3 @@ function b2 = dedup_rc(b, tol)
     end
     b2 = b;
 end
-
