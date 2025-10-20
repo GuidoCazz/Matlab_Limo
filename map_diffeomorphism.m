@@ -8,12 +8,11 @@ addpath(genpath(qcm_path));
 
 rng default;
 
-rosIP   = '10.174.177.25';                 
-MASTER  = 'http://10.174.177.87:11311';
+rosIP   = '10.229.22.25';                 
+MASTER  = 'http://10.229.22.87:11311';
 MAP_IN  = '/map_raw';
 MAP_OUT = '/map';
-POSITION = '/amcl_pose';
-LAMBDA = 5e7;
+% LAMBDA = 5e7;
 
 BYPASS  = false;            % true: copia 1:1; false: applica filtro
 ACTIVATE_BAG = false;
@@ -24,7 +23,7 @@ BASE_FRAME = 'base_link';
 
 % --- ROS ---
 rosshutdown; pause(0.2);
-rosinit(MASTER,'NodeHost',rosIP,'NodeName','/matlab_processing_map3');
+rosinit(MASTER,'NodeHost',rosIP,'NodeName','/matlab_processing_map4');
 
 tftree = rostf; pause(0.2);
 pub = rospublisher(MAP_OUT,'nav_msgs/OccupancyGrid','IsLatching',true,'DataFormat','struct');
@@ -33,15 +32,14 @@ pub = rospublisher(MAP_OUT,'nav_msgs/OccupancyGrid','IsLatching',true,'DataForma
 bagWriter = rosbagwriter('office_map_out.bag');
 cleanup = onCleanup(@() close(bagWriter));
 
-sub = rossubscriber(POSITION,'geometry_msgs/PoseWithCovarianceStamped');
-subProc = rossubscriber(MAP_IN,'nav_msgs/OccupancyGrid', @(~,m)processAndPublish(m,pub,sub,BYPASS,bagWriter,ACTIVATE_BAG,BAG_READ,ACKERMANN_RANGE,tftree,BASE_FRAME,LAMBDA), ...
+subProc = rossubscriber(MAP_IN,'nav_msgs/OccupancyGrid', @(~,m)processAndPublish(m,pub,BYPASS,bagWriter,ACTIVATE_BAG,BAG_READ,ACKERMANN_RANGE,tftree,BASE_FRAME), ...
     'DataFormat','struct');
 
 
 disp('Relay attivo: /map_raw -> /map (latched).');
 
 % ====== FUNZIONI ======
-function processAndPublish(m,pub,sub,BYPASS,bagWriter,ACTIVATE_BAG,BAG_READ,ACKERMANN_RANGE,tftree,BASE_FRAME,LAMBDA)
+function processAndPublish(m,pub,BYPASS,bagWriter,ACTIVATE_BAG,BAG_READ,ACKERMANN_RANGE,tftree,BASE_FRAME)
 
     if ACTIVATE_BAG
         if BAG_READ
@@ -156,7 +154,7 @@ function processAndPublish(m,pub,sub,BYPASS,bagWriter,ACTIVATE_BAG,BAG_READ,ACKE
     if BYPASS
         M2 = M;
     else
-        M2 = ProcessingDiffeomorphism(M,sub,LAMBDA);
+        M2 = ProcessingDiffeomorphism(M,BASE_FRAME,lx,ly);
     end
 
     out = rosmessage(pub);             
@@ -174,19 +172,19 @@ function processAndPublish(m,pub,sub,BYPASS,bagWriter,ACTIVATE_BAG,BAG_READ,ACKE
     send(pub,out);
 end
 
-function M2 = ProcessingDiffeomorphism(M,sub,LAMBDA)
+function M2 = ProcessingDiffeomorphism(M,BASE_FRAME,lx,ly)
      
     A = zeros(size(M));
     
-    msg = sub.LatestMessage;
-
-    if isempty(msg)
-        % No message received yet, skip processing or use default
-        x = [0;0];
-    else
-        position = msg.Pose.Pose.Position;
-        x = [position.X;position.Y];
+    % === Ottieni posizione del robot tramite TF ===
+    try
+        x = [lx; ly];
+    catch
+        % Se la trasformazione non è disponibile, fallback a (0,0)
+        warning('TF map -> %s non disponibile. Uso posizione [0,0].', BASE_FRAME);
+        x = [0; 0];
     end
+
      
 
     A(M == 100) = 0;
@@ -317,11 +315,8 @@ function M2 = ProcessingDiffeomorphism(M,sub,LAMBDA)
  
     wm = WorldMapping(realWorld, ballWorld);
 
-    wm.evaluateMappings(LAMBDA);
-    [r2bMap, b2rMap, r2bJac, b2rJac] = wm.getMappings();
-
     Diffeomorphism = matfile("diff_worldmapping.mat",'Writable',true);
-    save('diff_worldmapping.mat','wm','realWorld','ballWorld','r2bMap','b2rMap');
+    save('diff_worldmapping.mat','wm','realWorld','ballWorld');
 
     [height, width] = size(A);  
     pgmImage = false(height, width);
@@ -381,3 +376,4 @@ function b2 = dedup_rc(b, tol)
     end
     b2 = b;
 end
+
