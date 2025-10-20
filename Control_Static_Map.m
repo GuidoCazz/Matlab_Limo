@@ -23,8 +23,8 @@ m = matfile('diff_worldmapping.mat');
 WM = m.wm;
 realWorld = m.realWorld;
 ballWorld = m.ballWorld;
-r2bMap = m.r2bMap;
-b2rMap = m.b2rMap;
+WM.evaluateMappings(LAMBDA);
+[r2bMap, b2rMap, r2bJac, b2rJac] = WM.getMappings();
 
 x = [2;1];
 theta = pi;
@@ -141,15 +141,20 @@ for t = 1 : T_MAX
 %       u = r2bJac(x) \ uBall;
         u = Jr2b \ uBall;
 
-        v = R'*u;
+        v = R' * u;
+        v_max = 5.0;
+        if abs(v(1)) > v_max
+            v(1) = sign(v(1)) * v_max;
+        end
 
+        disp(v);
         d = [cos(theta); sin(theta)]; 
         dotp = dot(d,u);              
         crossp = d(1)*u(2) - d(2)*u(1);
         
         alpha = atan2(crossp, dotp);
 
-        omega = 50*alpha;
+        omega = 10*alpha;
 
         x = x + v(1)*[cos(theta);sin(theta)]*DT;
         theta = theta + omega*DT;
@@ -179,3 +184,4 @@ for t = 1 : T_MAX
 
     drawnow
 end
+
