@@ -376,4 +376,3 @@ function b2 = dedup_rc(b, tol)
     end
     b2 = b;
 end
-
