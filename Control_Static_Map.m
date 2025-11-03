@@ -12,10 +12,11 @@ addpath(genpath(ad_path));
 
 rng default;
 
+L = 0.2;
 LAMBDA = 5e7;
 DT = 0.001;
 T_MAX = 1e4;
-POSITION_RADIUS = 'equal';
+POSITION_RADIUS = 'radius';
 ALL_IN_BALL = false;
 
 
@@ -23,14 +24,22 @@ m = matfile('diff_worldmapping.mat');
 WM = m.wm;
 realWorld = m.realWorld;
 ballWorld = m.ballWorld;
+% 
+% realWorld.obstacles = realWorld.obstacles(3);
+% ballWorld.obstacles = ballWorld.obstacles(3);
+% 
+% WM.setRealWorld(realWorld);
+% WM.setBallWorld(ballWorld);
+% WM.composeMappings(LAMBDA);
+
 WM.evaluateMappings(LAMBDA);
 [r2bMap, b2rMap, r2bJac, b2rJac] = WM.getMappings();
 
-x = [2;1];
-theta = pi;
+x = [-2;0];
+theta = 0;
 xBall = r2bMap(x);
 
-xG = [-2;-2];
+xG = [6;0.2];
 xGBall = r2bMap(xG);
 
 xTraj = zeros(2,T_MAX);
@@ -66,8 +75,10 @@ hGBall = scatter(xGBall(1), xGBall(2), 200, '.');
 
 drawnow
 
+
 for t = 1 : T_MAX
 
+    xBall = r2bMap(x);
     if ALL_IN_BALL
         uNomBall = 10 * diag([6;1]) * (xGBall - xBall);
     else
@@ -94,8 +105,8 @@ for t = 1 : T_MAX
     bcbf = zeros(Nobst,1);
     for i = 1 : Nobst
         Acbf(i,2*i-1:2*i) = 2*(xBall-ballWorld.obstacles{i}.center)';
-        Acbf(i,2*Nobst+i) = 2*ballWorld.obstacles{i}.radius;
-        bcbf(i) = 2*(xBall-ballWorld.obstacles{i}.center)'*uBall + 1e2 * (norm(xBall-ballWorld.obstacles{i}.center)^2-ballWorld.obstacles{i}.radius^2);
+        Acbf(i,2*Nobst+i) = 2*(ballWorld.obstacles{i}.radius + L);
+        bcbf(i) = 2*(xBall-ballWorld.obstacles{i}.center)'*uBall + 50 * (norm(xBall-ballWorld.obstacles{i}.center)^2-(ballWorld.obstacles{i}.radius + L)^2);
     end
     if strcmp(POSITION_RADIUS, 'move')
         Wcenter = 1;
@@ -133,31 +144,35 @@ for t = 1 : T_MAX
         xBall = xBall + uBall*DT;
         x = b2rMap(xBall, x);
     else
-    
         Jr2b = AutoDiffJacobianFiniteDiff(r2bMap, x);%timeAD=toc;
-        R = [cos(theta) -sin(theta);
-             sin(theta)  cos(theta)];
+        % R = [cos(theta) -sin(theta);
+        %      sin(theta)  cos(theta)];
+        d = [cos(theta); sin(theta)]; 
 
 %       u = r2bJac(x) \ uBall;
+
         u = Jr2b \ uBall;
 
-        v = R' * u;
-        v_max = 5.0;
-        if abs(v(1)) > v_max
-            v(1) = sign(v(1)) * v_max;
-        end
+        v_proj = dot(d, u) / (dot(d,d));   % scala (può essere negativa)
+        v_max = 20;
+        v = max(min(v_proj, v_max), -v_max);  % clamp preservando segno
+        % if abs(uBall(1)) > v_max || abs(uBall(2)) > v_max
+        %     uBall(1) = sign(uBall(1)) * v_max;
+        %     uBall(2) = sign(uBall(2)) * v_max;
+        % end
 
-        disp(v);
-        d = [cos(theta); sin(theta)]; 
         dotp = dot(d,u);              
         crossp = d(1)*u(2) - d(2)*u(1);
         
         alpha = atan2(crossp, dotp);
 
-        omega = 10*alpha;
+        omega = 100*alpha;
 
-        x = x + v(1)*[cos(theta);sin(theta)]*DT;
+        x = x + v*[cos(theta);sin(theta)]*DT;
+
         theta = theta + omega*DT;
+        v,omega
+
     end
 
     %%% plot
