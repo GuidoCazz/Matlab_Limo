@@ -8,8 +8,8 @@ addpath(genpath(qcm_path));
 
 rng default;
 
-rosIP   = '10.229.22.25';                 
-MASTER  = 'http://10.229.22.87:11311';
+rosIP   = '129.97.71.119';                 
+MASTER  = 'http://129.97.71.85:11311';
 MAP_IN  = '/map_raw';
 MAP_OUT = '/map';
 % LAMBDA = 5e7;
@@ -23,7 +23,7 @@ BASE_FRAME = 'base_link';
 
 % --- ROS ---
 rosshutdown; pause(0.2);
-rosinit(MASTER,'NodeHost',rosIP,'NodeName','/matlab_processing_map4');
+rosinit(MASTER,'NodeHost',rosIP,'NodeName','/matlab_processing_map6');
 
 tftree = rostf; pause(0.2);
 pub = rospublisher(MAP_OUT,'nav_msgs/OccupancyGrid','IsLatching',true,'DataFormat','struct');
@@ -290,14 +290,15 @@ function M2 = ProcessingDiffeomorphism(M,BASE_FRAME,lx,ly)
         polygon{i} = polyshape(V(:,1),V(:,2), 'Simplify', true, 'KeepCollinearPoints', true);
         poly_plot{i} = polygon{i};
         polygon{i} = translate(polygon{i}, translation);
-        polygon{i} = scale(polygon{i}, res, [0 0]);
+        polygon{i} = scale(polygon{i}, 0.1, [0 0]);
 
+        
         current_b = polygon{i}.Vertices;
         current_b(size(current_b,1)+1,:) = current_b(1,:);
         
         [cx_p,cy_p] = centroid(polygon{i});
         ball_obstacle_centers{i} = [cx_p;cy_p];
-        ball_obstacle_radius{i} = sqrt(area(polygon{i})/pi);
+        ball_obstacle_radius{i} = max(sqrt(area(polygon{i})/pi),1);
         real_obstacle_contours{i} = current_b.';
         
         
@@ -311,7 +312,7 @@ function M2 = ProcessingDiffeomorphism(M,BASE_FRAME,lx,ly)
         ballWorld.obstacles{end}.radius          = ball_obstacle_radius{i};
         ballWorld.obstacles{end}.radiusOriginal  = ball_obstacle_radius{i};
     end
-    
+     
  
     wm = WorldMapping(realWorld, ballWorld);
 
