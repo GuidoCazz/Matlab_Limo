@@ -1,3 +1,5 @@
+%% Control Simulation
+
 clc; close all; clear;
 
 restoredefaultpath;
@@ -12,34 +14,61 @@ addpath(genpath(ad_path));
 
 rng default;
 
+% Parameters
 L = 0.2;
-LAMBDA = 5e7;
-DT = 0.001;
+LAMBDA = 20000; % Mapping Parameter
+DT = 0.01;
 T_MAX = 1e4;
-POSITION_RADIUS = 'radius';
-ALL_IN_BALL = false;
+POSITION_RADIUS = 'move';
+ALL_IN_BALL = true;
 
 
+%% First Matfile reading and Initialization
 m = matfile('diff_worldmapping.mat');
 WM = m.wm;
 realWorld = m.realWorld;
 ballWorld = m.ballWorld;
-% 
-% realWorld.obstacles = realWorld.obstacles(3);
-% ballWorld.obstacles = ballWorld.obstacles(3);
-% 
-% WM.setRealWorld(realWorld);
-% WM.setBallWorld(ballWorld);
-% WM.composeMappings(LAMBDA);
 
-WM.evaluateMappings(LAMBDA);
+Nobst = numel(realWorld.obstacles);
+
+% Obstacle scaling factors
+scale_width = 1.5; 
+scale_length = 1; 
+
+for i = 1 : Nobst
+    contour = realWorld.obstacles{i}.contour;
+    x = contour(1, :);
+    y = contour(2, :);
+
+    cx = mean(x);
+    cy = mean(y);
+
+    X = [x - cx; y - cy];
+
+    C = cov(X');
+    [V, ~] = eig(C);
+
+    dir_long = V(:,2);
+    dir_short = V(:,1);
+
+    A = [dir_long dir_short] * diag([scale_length, scale_width]) * [dir_long dir_short]';
+
+    X_scaled = A * X;
+
+    realWorld.obstacles{i}.contour = [X_scaled(1,:) + cx; X_scaled(2,:) + cy];
+end
+
+
+WM.setRealWorld(realWorld)
+WM.setBallWorld(ballWorld)
+WM.evaluateMappings(LAMBDA)
 [r2bMap, b2rMap, r2bJac, b2rJac] = WM.getMappings();
 
-x = [-2;0];
+x = [0;0];
 theta = 0;
 xBall = r2bMap(x);
 
-xG = [6;0.2];
+xG = [2.8;0];
 xGBall = r2bMap(xG);
 
 xTraj = zeros(2,T_MAX);
@@ -47,16 +76,16 @@ xTraj(:,1) = x;
 xTrajBall = zeros(2,T_MAX);
 xTrajBall(:,1) = xBall;
 
-Nobst = numel(realWorld.obstacles);
 
-% plots
+% Initial Plot
+obstacle_colors = ['r', 'g', 'b', 'c', 'm'];
 figure;
 
 subplot(1,2,1), hold on, axis equal, set(gca, 'Visible', 'off')
 hSTraj = line(x(1), x(2), 'LineWidth', 2, LineJoin="chamfer");
 plot(realWorld.domain.contour(1,[1:end,1]), realWorld.domain.contour(2,[1:end,1]), 'LineWidth', 2,LineJoin="chamfer")
 for i = 1 : Nobst
-    plot(realWorld.obstacles{i}.contour(1,[1:end,1]), realWorld.obstacles{i}.contour(2,[1:end,1]), 'LineWidth', 2,LineJoin="chamfer")
+    plot(realWorld.obstacles{i}.contour(1,[1:end,1]), realWorld.obstacles{i}.contour(2,[1:end,1]), 'LineWidth', 2,LineJoin="chamfer",Color=obstacle_colors(i))
 end
 scatter(xG(1), xG(2), 200, '.');
 hRobot = drawRobot(x(1), x(2), theta, 0.2, 'r');
@@ -69,21 +98,24 @@ plot(domainBall(1,[1:end,1]), domainBall(2,[1:end,1]), 'LineWidth', 2, LineJoin=
 hObstBall = cell(1,numel(ballWorld.obstacles));
 for i = 1 : Nobst
     obstBall = ballWorld.obstacles{i}.center + ballWorld.obstacles{i}.radius * [cos(linspace(0,2*pi,100)); sin(linspace(0,2*pi,100))];
-    hObstBall{i} = plot(obstBall(1,[1:end,1]), obstBall(2,[1:end,1]), 'LineWidth', 2, LineJoin="chamfer");
+    hObstBall{i} = plot(obstBall(1,[1:end,1]), obstBall(2,[1:end,1]), 'LineWidth', 2, LineJoin="chamfer",Color=obstacle_colors(i));
 end
 hGBall = scatter(xGBall(1), xGBall(2), 200, '.');
 
 drawnow
 
 
+%% --- MAIN LOOP ---
 for t = 1 : T_MAX
 
     xBall = r2bMap(x);
+
+    % Nominal Controller
     if ALL_IN_BALL
-        uNomBall = 10 * diag([6;1]) * (xGBall - xBall);
+        uNomBall = 10 * diag([1;1]) * (xGBall - xBall);
     else
-        uNomReal = 10 * diag([6;1]) * (xG - x);
-        Jr2b = AutoDiffJacobianFiniteDiff(r2bMap, x);%timeAD=toc;
+        uNomReal = 10 * diag([1;1]) * (xG - x);
+        Jr2b = AutoDiffJacobianFiniteDiff(r2bMap, x);
         
         %uNomBall = r2bJac(x) * uNomReal;
         uNomBall = Jr2b * uNomReal;
@@ -97,6 +129,7 @@ for t = 1 : T_MAX
     uObstNomBall = zeros(2*Nobst,1);
     rhoObstNomBall = zeros(Nobst,1);
 
+    %% --- QP FORMULATION ---
     for i = 1 : Nobst
         uObstNomBall(2*i-1:2*i) = 10*(ballWorld.obstacles{i}.centerOriginal - ballWorld.obstacles{i}.center);
         rhoObstNomBall(i) = 10*(ballWorld.obstacles{i}.radiusOriginal - ballWorld.obstacles{i}.radius);
@@ -106,7 +139,7 @@ for t = 1 : T_MAX
     for i = 1 : Nobst
         Acbf(i,2*i-1:2*i) = 2*(xBall-ballWorld.obstacles{i}.center)';
         Acbf(i,2*Nobst+i) = 2*(ballWorld.obstacles{i}.radius + L);
-        bcbf(i) = 2*(xBall-ballWorld.obstacles{i}.center)'*uBall + 50 * (norm(xBall-ballWorld.obstacles{i}.center)^2-(ballWorld.obstacles{i}.radius + L)^2);
+        bcbf(i) = 2*(xBall-ballWorld.obstacles{i}.center)'*uBall + 1e2 * (norm(xBall-ballWorld.obstacles{i}.center)^2-(ballWorld.obstacles{i}.radius + L)^2);
     end
     if strcmp(POSITION_RADIUS, 'move')
         Wcenter = 1;
@@ -134,17 +167,32 @@ for t = 1 : T_MAX
         ballWorld.obstacles{i}.radius = ballWorld.obstacles{i}.radius + rDotI*DT;
     end
 
-    %%% re-evaluate mappings after changing obstacles
-    WM.setBallWorld(ballWorld);
-    WM.composeMappings(LAMBDA);
+    %% Mappings re-evaluation
+    WM.setBallWorld(ballWorld)
+    WM.composeMappings(LAMBDA)
     [r2bMap, b2rMap, r2bJac, b2rJac] = WM.getMappings();
 
-    %%% integration step
+    %% Integration Step
     if ALL_IN_BALL
         xBall = xBall + uBall*DT;
-        x = b2rMap(xBall, x);
+        x_tr = b2rMap(xBall, x);
+
+        d = [cos(theta); sin(theta)]; 
+        direction = x_tr - x;
+
+        v_proj = dot(d, direction) / (dot(d,d));   % scala (può essere negativa)
+        v_max = inf;
+        v = max(min(v_proj, v_max), -v_max);
+
+        dotp = dot(d,direction);              
+        crossp = d(1)*direction(2) - d(2)*direction(1);
+        
+        alpha = atan2(crossp, dotp);
+
+        omega = 100*alpha;
+
     else
-        Jr2b = AutoDiffJacobianFiniteDiff(r2bMap, x);%timeAD=toc;
+        Jr2b = AutoDiffJacobianFiniteDiff(r2bMap, x);
         % R = [cos(theta) -sin(theta);
         %      sin(theta)  cos(theta)];
         d = [cos(theta); sin(theta)]; 
@@ -153,9 +201,9 @@ for t = 1 : T_MAX
 
         u = Jr2b \ uBall;
 
-        v_proj = dot(d, u) / (dot(d,d));   % scala (può essere negativa)
-        v_max = 20;
-        v = max(min(v_proj, v_max), -v_max);  % clamp preservando segno
+        v_proj = dot(d, u) / (dot(d,d)); 
+        v_max = 1;
+        v = max(min(v_proj, v_max), -v_max); 
         % if abs(uBall(1)) > v_max || abs(uBall(2)) > v_max
         %     uBall(1) = sign(uBall(1)) * v_max;
         %     uBall(2) = sign(uBall(2)) * v_max;
@@ -166,16 +214,16 @@ for t = 1 : T_MAX
         
         alpha = atan2(crossp, dotp);
 
-        omega = 100*alpha;
-
-        x = x + v*[cos(theta);sin(theta)]*DT;
-
-        theta = theta + omega*DT;
-        v,omega
+        omega = 5*alpha;
 
     end
+    v,omega
 
-    %%% plot
+    %% Robot Kinematics Integration
+    x = x + v*[cos(theta);sin(theta)]*DT;
+    theta = theta + omega*DT;
+
+    %% Plot
     for i = 1 : numel(ballWorld.obstacles)
         obstBall = ballWorld.obstacles{i}.center + ballWorld.obstacles{i}.radius * [cos(linspace(0,2*pi,100)); sin(linspace(0,2*pi,100))];
         hObstBall{i}.XData = obstBall(1,[1:end,1]);
@@ -197,6 +245,6 @@ for t = 1 : T_MAX
 
     updateRobot(hRobot, x(1), x(2), theta);
 
-    drawnow
+    drawnow limitrate
 end
 
