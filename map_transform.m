@@ -1,3 +1,5 @@
+%% MAP TRANSFORMATION AND VISUALIZATION
+
 clc;
 clear;
 close all;
@@ -134,9 +136,6 @@ end
 figure;
 imshow(M2);
 
-% pgm = logical(~pgmImage);     % HxW binaria
-
-% Convert the binary image to uint8 format for PGM output
 pgmImage = uint8(pgmImage*255); % Scale to 0-255 for PGM format
 
 
