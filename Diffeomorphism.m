@@ -1,3 +1,4 @@
+%% DIFFEOMORPHISM AND PROCESSING EXAMPLE OF AN OFFICE MAP
 clc; clear; close all;
 
 addpath(genpath('../'))
@@ -92,7 +93,6 @@ for i=1:CF.NumObjects
     b = b(all(isfinite(b),2),:);
     if size(b,1) < 3, continue; end
 
-    % remove consecutive duplicate
     b = dedup_rc(b, 1e-9);
     if size(b,1) < 3, continue; end
 
@@ -125,7 +125,6 @@ end
 
 figure;
 for i=1:CF.NumObjects 
-    % Set axis limits to match the original image size
     axis([realWorld.domain.contour(1,1) realWorld.domain.contour(1,4) realWorld.domain.contour(2,1) realWorld.domain.contour(2,2)]);
     axis equal;
     grid on;
@@ -139,17 +138,15 @@ for i=1:CF.NumObjects
 end
 hold off;
 
-% ===== Plot "mondo palla" (domain + ostacoli) =====
+% ===== Plot ball-world =====
 figure('Name','Ball world'); hold on; axis equal;
-set(gca,'YDir','reverse');    % coord. immagine: y verso il basso
+set(gca,'YDir','reverse');    
 
-% Dominio (cerchio)
 cB = ballWorld.domain.center(:);
 RB = ballWorld.domain.radius;
 th = linspace(0,2*pi,400);
 plot(cB(1) + RB*cos(th), cB(2) + RB*sin(th), 'k','LineWidth',2);
 
-% Ostacoli (cerchi)
 Nobst = numel(ballWorld.obstacles);
 for i = 1:Nobst
     ci = ballWorld.obstacles{i};
@@ -158,13 +155,7 @@ for i = 1:Nobst
     plot(ci.center(1), ci.center(2), 'r.','MarkerSize',14); % centro ostacolo
 end
 
-% Centro dominio e (opzionale) goal se coerente con le unità
-plot(cB(1), cB(2), 'bo','MarkerFaceColor','b');         % centro ball
-% Se il tuo goal è in stesse unità del ball, decommenta:
-% gB = ballWorld.domain.goal(:);
-% plot(gB(1), gB(2), 'gx','MarkerSize',10,'LineWidth',2);
-
-% Cornice visiva
+plot(cB(1), cB(2), 'bo','MarkerFaceColor','b'); 
 pad = 20;
 xlim([cB(1)-RB-pad, cB(1)+RB+pad]);
 ylim([cB(2)-RB-pad, cB(2)+RB+pad]);
@@ -175,37 +166,32 @@ wm = WorldMapping(realWorld, ballWorld);
 wm.evaluateMappings(LAMBDA);
 [r2bMap, b2rMap, r2bJac, b2rJac] = wm.getMappings();
 
-% --- costruisco f_k e beta_k come fa WorldMapping (solo per debug) ---
+
+% Feasibility Check
 N = numel(realWorld.obstacles);
 fH = cell(1,N+1); betaH = cell(1,N+1);
 
-% ambiente (interior)
 fH{1}    = ObstacleMappingQC(realWorld.domain.contour, 'interior', 0).getReal2BallMapHandle();
 betaH{1} = @(q) 1 - norm(fH{1}(q))^2;
 
-% ostacoli (exterior)
 for k = 1:N
     fH{k+1}    = ObstacleMappingQC(realWorld.obstacles{k}.contour, 'exterior', 0).getReal2BallMapHandle();
     betaH{k+1} = @(q) norm(fH{k+1}(q))^2 - 1;
 end
 
-% prodotto delle beta escluso j
 prodExcl = @(q,j) prod(arrayfun(@(k) betaH{k}(q), setdiff(1:N+1, j+1)));
 
-% scansiona ogni ostacolo su un anello esterno sottile
 lambda = LAMBDA;
 viol = [];
 for j = 1:N
-    % anello: bordo ostacolo "just outside"
     ring = polyshape(realWorld.obstacles{j}.contour(1,:)', realWorld.obstacles{j}.contour(2,:)');
-    % mezzo pixel fuori; regola se serve
     if isempty(ring), continue; end
     V = ring.Vertices; if isempty(V), continue; end
-    V = V(1:10:end,:);                % campiona pochi punti
+    V = V(1:10:end,:);
 
     minden = inf; minq = [NaN;NaN];
     for t = 1:size(V,1)
-        q = V(t,:)';                   % [x;y]
+        q = V(t,:)';                 
         A = norm(q - realWorld.domain.goal)^2 * prodExcl(q, j);
         den = A + lambda * betaH{j+1}(q);
         if ~isfinite(den) || abs(den) < minden
@@ -214,19 +200,18 @@ for j = 1:N
     end
 
     if ~isfinite(minden) || minden < 1e-10
-        fprintf('DEN≈0 per ostacolo %d  minden=%.3e  @ (%.3f, %.3f)\n', j, minden, minq(1), minq(2));
+        fprintf('DEN≈0 for obstacle %d  minden=%.3e  @ (%.3f, %.3f)\n', j, minden, minq(1), minq(2));
         viol(end+1) = j;
     end
 end
 
 if isempty(viol)
-    disp('Nessun denominatore critico trovato sul bordo esterno degli ostacoli.');
+    disp('No critical Denominator found.');
 end
 
 
 
 function b2 = dedup_rc(b, tol)
-    % rimuove duplicati consecutivi e chiusura duplicata (input [row col])
     keep = true(size(b,1),1);
     for k = 2:size(b,1)
         if norm(b(k,:)-b(k-1,:)) <= tol
