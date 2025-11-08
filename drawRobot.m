@@ -1,5 +1,5 @@
+% Robot Pose Sketched as a Triangle
 function h = drawRobot(x, y, theta, size, color)
-    % Triangolo isoscele con base size e altezza 2*size
     theta = theta - pi/2;
     pts = [ size, 0, -size;
             -size, 2*size, -size];
