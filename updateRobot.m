@@ -1,3 +1,4 @@
+% Sketch of the Robot Pose update
 function updateRobot(h, x, y, theta)
     theta = theta - pi/2;
     size = 0.2;
